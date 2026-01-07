@@ -180,4 +180,4 @@ __all__ = (
     "YOLOESegment",
     "v10Detect",
 )
-from .ECA_C2f import ECA_C2f
+from .eca_c2f import ECA_C2f
