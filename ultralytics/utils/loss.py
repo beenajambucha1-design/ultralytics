@@ -127,6 +127,14 @@ class BboxLoss(nn.Module):
         weight = target_scores.sum(-1)[fg_mask].unsqueeze(-1)
         iou = bbox_iou(pred_bboxes[fg_mask], target_bboxes[fg_mask], xywh=False, CIoU=True)
         loss_iou = ((1.0 - iou) * weight).sum() / target_scores_sum
+        bp = torch.stack([px, py, pw, ph], dim=-1)
+        bg = torch.stack([gx, gy, gw, gh], dim=-1)
+        # cosine similarity
+        corr = F.cosine_similarity(bp, bg, dim=-1)
+        # correlation loss
+        L_corr = 1.0 - corr
+        # final box loss
+        L_box = L_ciou + lambda_corr * L_corr
 
         # DFL loss
         if self.dfl_loss:
