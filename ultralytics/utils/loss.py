@@ -131,13 +131,17 @@ class BboxLoss(nn.Module):
         loss_iou = ((1.0 - iou) * weight).sum() / target_scores_sum
         bp = torch.stack([px, py, pw, ph], dim=-1)
         bg = torch.stack([gx, gy, gw, gh], dim=-1)
+        warmup = min(1.0, self.epoch / 10.0)
+        
+
         # cosine similarity
         corr = F.cosine_similarity(bp, bg, dim=-1)
         # correlation loss
         L_corr = 1.0 - corr
+        loss_corr = warmup * L_corr
         # final box loss
         lambda_corr = 0.1
-        L_box = loss_iou + self.lambda_corr * L_corr
+        L_box = loss_iou + self.lambda_corr * loss_corr
         print("DEBUG: CIoU + Corr loss active")
 
         # DFL loss
@@ -223,6 +227,7 @@ class v8DetectionLoss:
         self.use_dfl = m.reg_max > 1
 
         self.assigner = TaskAlignedAssigner(topk=tal_topk, num_classes=self.nc, alpha=0.5, beta=6.0)
+        self.bbox_loss.epoch = getattr(self, "epoch", 0)
         self.bbox_loss = BboxLoss(m.reg_max).to(device)
         self.proj = torch.arange(m.reg_max, dtype=torch.float, device=device)
 
