@@ -48,7 +48,7 @@ class ECA_C2f(nn.Module):
 
         self.act = nn.SiLU(inplace=True)
         self.eca = ECA(c2, k_size=eca_kernel)
-  def forward(self, x):
+    def forward(self, x):
         y = self.act(self.bn1(self.cv1(x)))
         y1, y2 = y.chunk(2, dim=1)
 
