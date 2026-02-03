@@ -129,20 +129,26 @@ class BboxLoss(nn.Module):
         weight = target_scores.sum(-1)[fg_mask].unsqueeze(-1)
         iou = bbox_iou(pred_bboxes[fg_mask], target_bboxes[fg_mask], xywh=False, CIoU=True)
         loss_iou = ((1.0 - iou) * weight).sum() / target_scores_sum
-        bp = torch.stack([px, py, pw, ph], dim=-1)
-        bg = torch.stack([gx, gy, gw, gh], dim=-1)
-        warmup = min(1.0, self.epoch / 10.0)
-        
+       pb = pred_bboxes[fg_mask]
+        gb = target_bboxes[fg_mask]
 
-        # cosine similarity
-        corr = F.cosine_similarity(bp, bg, dim=-1)
-        # correlation loss
-        L_corr = 1.0 - corr
-        loss_corr = warmup * L_corr
-        # final box loss
-        lambda_corr = 0.1
+        pb_xywh = xyxy2xywh(pb)
+        gb_xywh = xyxy2xywh(gb)
+
+        bp = pb_xywh
+        bg = gb_xywh
+
+        # IoU loss
+        weight = target_scores.sum(-1)[fg_mask].unsqueeze(-1)
+        iou = bbox_iou(pb, gb, xywh=False, CIoU=True)
+        loss_iou = ((1.0 - iou) * weight.squeeze(-1)).sum() / target_scores_sum
+
+        # correlation loss (warm-up)
+        warmup = min(1.0, self.epoch / 10.0)
+        corr = F.cosine_similarity(bp, bg, dim=-1, eps=1e-7)
+        loss_corr = ((1.0 - corr) * warmup * weight.squeeze(-1)).sum() / target_scores_sum
+
         L_box = loss_iou + self.lambda_corr * loss_corr
-        print("DEBUG: CIoU + Corr loss active")
 
         # DFL loss
         if self.dfl_loss:
@@ -152,7 +158,7 @@ class BboxLoss(nn.Module):
         else:
             loss_dfl = torch.tensor(0.0).to(pred_dist.device)
 
-        return L_box.mean(), loss_dfl
+        return L_box, loss_dfl
 
 
 class RotatedBboxLoss(BboxLoss):
