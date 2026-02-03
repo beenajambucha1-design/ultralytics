@@ -129,7 +129,7 @@ class BboxLoss(nn.Module):
         weight = target_scores.sum(-1)[fg_mask].unsqueeze(-1)
         iou = bbox_iou(pred_bboxes[fg_mask], target_bboxes[fg_mask], xywh=False, CIoU=True)
         loss_iou = ((1.0 - iou) * weight).sum() / target_scores_sum
-       pb = pred_bboxes[fg_mask]
+        pb = pred_bboxes[fg_mask]
         gb = target_bboxes[fg_mask]
 
         pb_xywh = xyxy2xywh(pb)
