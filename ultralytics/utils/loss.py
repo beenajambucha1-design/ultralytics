@@ -233,8 +233,9 @@ class v8DetectionLoss:
         self.use_dfl = m.reg_max > 1
 
         self.assigner = TaskAlignedAssigner(topk=tal_topk, num_classes=self.nc, alpha=0.5, beta=6.0)
-        self.bbox_loss.epoch = getattr(self, "epoch", 0)
+       
         self.bbox_loss = BboxLoss(m.reg_max).to(device)
+        self.bbox_loss.epoch = 0
         self.proj = torch.arange(m.reg_max, dtype=torch.float, device=device)
 
     def preprocess(self, targets: torch.Tensor, batch_size: int, scale_tensor: torch.Tensor) -> torch.Tensor:
@@ -265,6 +266,7 @@ class v8DetectionLoss:
 
     def __call__(self, preds: Any, batch: dict[str, torch.Tensor]) -> tuple[torch.Tensor, torch.Tensor]:
         """Calculate the sum of the loss for box, cls and dfl multiplied by batch size."""
+        self.bbox_loss.epoch = getattr(self, "epoch", 0)
         loss = torch.zeros(3, device=self.device)  # box, cls, dfl
         feats = preds[1] if isinstance(preds, tuple) else preds
         pred_distri, pred_scores = torch.cat([xi.view(feats[0].shape[0], self.no, -1) for xi in feats], 2).split(
