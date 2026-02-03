@@ -135,6 +135,7 @@ class BboxLoss(nn.Module):
         L_corr = 1.0 - corr
         # final box loss
         L_box = L_ciou + lambda_corr * L_corr
+        print("DEBUG: CIoU + Corr loss active")
 
         # DFL loss
         if self.dfl_loss:
