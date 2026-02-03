@@ -149,7 +149,7 @@ class BboxLoss(nn.Module):
         loss_corr = ((1.0 - corr) * warmup * weight.squeeze(-1)).sum() / target_scores_sum
 
         L_box = loss_iou + self.lambda_corr * loss_corr
-
+        print(">>> USING FORKED MODIFIED LOSS <<<")
         # DFL loss
         if self.dfl_loss:
             target_ltrb = bbox2dist(anchor_points, target_bboxes, self.dfl_loss.reg_max - 1)
