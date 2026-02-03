@@ -111,7 +111,7 @@ class BboxLoss(nn.Module):
     def __init__(self, reg_max: int = 16):
         """Initialize the BboxLoss module with regularization maximum and DFL settings."""
         super().__init__()
-        self.lambda_corr = 0.1
+        self.lambda_corr = 0.2
         self.epoch=0
         self.dfl_loss = DFLoss(reg_max) if reg_max > 1 else None
 
