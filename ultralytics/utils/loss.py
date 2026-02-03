@@ -111,6 +111,8 @@ class BboxLoss(nn.Module):
     def __init__(self, reg_max: int = 16):
         """Initialize the BboxLoss module with regularization maximum and DFL settings."""
         super().__init__()
+        self.lambda_corr = 0.1
+        self.epoch=0
         self.dfl_loss = DFLoss(reg_max) if reg_max > 1 else None
 
     def forward(
@@ -134,7 +136,8 @@ class BboxLoss(nn.Module):
         # correlation loss
         L_corr = 1.0 - corr
         # final box loss
-        L_box = L_ciou + lambda_corr * L_corr
+        lambda_corr = 0.1
+        L_box = loss_iou + self.lambda_corr * L_corr
         print("DEBUG: CIoU + Corr loss active")
 
         # DFL loss
@@ -145,7 +148,7 @@ class BboxLoss(nn.Module):
         else:
             loss_dfl = torch.tensor(0.0).to(pred_dist.device)
 
-        return loss_iou, loss_dfl
+        return L_box.mean(), loss_dfl
 
 
 class RotatedBboxLoss(BboxLoss):
