@@ -316,19 +316,31 @@ class ConfusionMatrix(DataExportMixin):
         matches (dict | None): Contains the indices of ground truths and predictions categorized into TP, FP and FN.
     """
 
-    def __init__(self, names: dict[int, str] = {}, task: str = "detect", save_matches: bool = True):
+    def __init__(self, names: dict[int, str] = {}, task: str = "detect", save_matches: bool = True, save_dir: Path = None):
         """Initialize a ConfusionMatrix instance.
 
         Args:
             names (dict[int, str], optional): Names of classes, used as labels on the plot.
             task (str, optional): Type of task, either 'detect' or 'classify'.
             save_matches (bool, optional): Save the indices of GTs, TPs, FPs, FNs for visualization.
+            save_dir (Path, optional): Directory to save detection details JSON file.
         """
         self.task = task
         self.nc = len(names)  # number of classes
         self.matrix = np.zeros((self.nc, self.nc)) if self.task == "classify" else np.zeros((self.nc + 1, self.nc + 1))
         self.names = names  # name of classes
         self.matches = {} if save_matches else None
+        self.save_dir = Path(save_dir) if save_dir else None
+        self.image_name = None  # Track current image name
+        self.detections_list = []  # Store detections for JSON export
+    def set_image_name(self, image_name: str) -> None:
+        """Set the current image name being processed.
+    
+        Args:
+            image_name (str): Name of the image being processed.
+        """
+        self.image_name = image_name
+
 
     def _append_matches(self, mtype: str, batch: dict[str, Any], idx: int) -> None:
         """Append the matches to TP, FP, FN or GT list for the last batch.
@@ -399,12 +411,18 @@ class ConfusionMatrix(DataExportMixin):
                 for i, dc in enumerate(detection_classes):
                     self.matrix[dc, self.nc] += 1  # FP
                     self._append_matches("FP", detections, i)
+                     # Save detection details
+                    self._save_detection_detail(detections["bboxes"][i].cpu().numpy(), dc, detections["conf"][i].item(), "FP")
+                                   
             return
         if no_pred:
             gt_classes = gt_cls.int().tolist()
             for i, gc in enumerate(gt_classes):
                 self.matrix[self.nc, gc] += 1  # FN
                 self._append_matches("FN", batch, i)
+                # Save detection details
+                self._save_detection_detail(gt_bboxes[i].cpu().numpy(), gc, 1.0, "FN")
+                              
             return
 
         detections = {k: detections[k][detections["conf"] > conf] for k in detections}
@@ -433,21 +451,111 @@ class ConfusionMatrix(DataExportMixin):
                 self.matrix[dc, gc] += 1  # TP if class is correct else both an FP and an FN
                 if dc == gc:
                     self._append_matches("TP", detections, m1[j].item())
+                    # Save TP detection
+                    self._save_detection_detail(bboxes[m1[j].item()].cpu().numpy(), dc, detections["conf"][m1[j].item()].item(), "TP")
+                                        
                 else:
                     self._append_matches("FP", detections, m1[j].item())
                     self._append_matches("FN", batch, i)
+                    # Save FP detection
+                    self._save_detection_detail(bboxes[m1[j].item()].cpu().numpy(), dc, detections["conf"][m1[j].item()].item(), "FP")
+                    # Save FN detection
+                    self._save_detection_detail(gt_bboxes[i].cpu().numpy(), gc, 1.0, "FN")
+                                                   
             else:
                 self.matrix[self.nc, gc] += 1  # FN
                 self._append_matches("FN", batch, i)
-
+                # Save FN detection
+                self._save_detection_detail(gt_bboxes[i].cpu().numpy(), gc, 1.0, "FN")
+              
         for i, dc in enumerate(detection_classes):
             if not any(m1 == i):
                 self.matrix[dc, self.nc] += 1  # FP
                 self._append_matches("FP", detections, i)
+                # Save FP detection
+                self._save_detection_detail(bboxes[i].cpu().numpy(), dc,detections["conf"][i].item(),"FP" )
+    def _save_detection_detail(self, bbox: np.ndarray, class_id: int, conf: float, detection_type: str) -> None:
+    """Save detection details to list for later JSON export.
+    
+    Args:
+        bbox (np.ndarray): Bounding box coordinates [x1, y1, x2, y2] or [x, y, w, h, angle].
+        class_id (int): Class ID of the detection.
+        conf (float): Confidence score.
+        detection_type (str): Type of detection ('TP', 'FP', 'FN').
+    """
+    if self.save_dir is None:
+        return
+    
+    detection_record = {
+        "image_name": self.image_name,
+        "class_name": self.names.get(class_id, f"class_{class_id}"),
+        "class_id": int(class_id),
+        "confidence": float(conf),
+        "detection_type": detection_type,
+        "bbox": bbox.tolist(),
+        "bbox_format": "xywhr" if len(bbox) == 5 else "xyxy"
+    }
+    self.detections_list.append(detection_record)
 
-    def matrix(self):
-        """Return the confusion matrix."""
-        return self.matrix
+
+    def save_detections_to_json(self, filename: str = "detections.json") -> None:
+        """Save all detection details to a JSON file.
+    
+        Args:
+            filename (str, optional): Name of the JSON file to save. Defaults to "detections.json".
+        """
+        if self.save_dir is None or not self.detections_list:
+            LOGGER.warning("No save directory set or no detections to save")
+            return
+    
+        self.save_dir.mkdir(parents=True, exist_ok=True)
+        json_file = self.save_dir / filename
+    
+        with open(json_file, 'w') as f:
+            json.dump(self.detections_list, f, indent=2)
+    
+        LOGGER.info(f"Detections saved to {json_file}")
+
+
+    def save_detections_to_csv(self, filename: str = "detections.csv") -> None:
+        """Save all detection details to a CSV file.
+    
+        Args:
+            filename (str, optional): Name of the CSV file to save. Defaults to "detections.csv".
+        """
+        if self.save_dir is None or not self.detections_list:
+            LOGGER.warning("No save directory set or no detections to save")
+            return
+    
+        import csv
+        self.save_dir.mkdir(parents=True, exist_ok=True)
+        csv_file = self.save_dir / filename
+    
+        if not self.detections_list:
+            return
+        
+    # Get field names from first record
+        fieldnames = list(self.detections_list[0].keys())
+    
+        with open(csv_file, 'w', newline='') as f:
+            writer = csv.DictWriter(f, fieldnames=fieldnames)
+            writer.writeheader()
+        
+            for record in self.detections_list:
+                # Convert bbox list to string for CSV
+                record['bbox'] = str(record['bbox'])
+                writer.writerow(record)
+    
+        LOGGER.info(f"Detections saved to {csv_file}")
+
+
+    def clear_detections(self) -> None:
+        """Clear the stored detections list."""
+        self.detections_list = []
+            
+        def matrix(self):
+            """Return the confusion matrix."""
+            return self.matrix
 
     def tp_fp(self) -> tuple[np.ndarray, np.ndarray]:
         """Return true positives and false positives.
