@@ -316,7 +316,7 @@ class ConfusionMatrix(DataExportMixin):
         matches (dict | None): Contains the indices of ground truths and predictions categorized into TP, FP and FN.
     """
 
-    def __init__(self, names: dict[int, str] = {}, task: str = "detect", save_matches: bool = True, save_dir: Path = None):
+    def __init__(self, names: dict[int, str] = {}, task: str = "detect", save_matches = True, save_dir: Path = None):
         """Initialize a ConfusionMatrix instance.
 
         Args:
