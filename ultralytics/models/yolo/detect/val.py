@@ -429,7 +429,7 @@ class DetectionValidator(BaseValidator):
         image_id = int(stem) if stem.isnumeric() else stem
         box = ops.xyxy2xywh(predn["bboxes"])  # xywh
         box[:, :2] -= box[:, 2:] / 2  # xy center to top-left corner
-        for idx, (b, s, c) in enumerate(zip(box.tolist(), predn["conf"].tolist(), predn["cls"].tolist()):
+        for idx, (b, s, c) in enumerate(zip(box.tolist(), predn["conf"].tolist(), predn["cls"].tolist())):
             detection_item={"image_id": image_id,
                 "file_name": path.name,
                 "category_id": self.class_map[int(c)],
