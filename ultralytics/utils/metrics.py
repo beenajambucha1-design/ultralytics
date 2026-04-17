@@ -474,6 +474,7 @@ class ConfusionMatrix(DataExportMixin):
                 self._append_matches("FP", detections, i)
                 # Save FP detection
                 self._save_detection_detail(bboxes[i].cpu().numpy(), dc,detections["conf"][i].item(),"FP" )
+                
     def _save_detection_detail(self, bbox: np.ndarray, class_id: int, conf: float, detection_type: str) -> None:
         """Save detection details to list for later JSON export.
     
@@ -486,16 +487,16 @@ class ConfusionMatrix(DataExportMixin):
         if self.save_dir is None:
             return
     
-    detection_record = {
-        "image_name": self.image_name,
-        "class_name": self.names.get(class_id, f"class_{class_id}"),
-        "class_id": int(class_id),
-        "confidence": float(conf),
-        "detection_type": detection_type,
-        "bbox": bbox.tolist(),
-        "bbox_format": "xywhr" if len(bbox) == 5 else "xyxy"
-    }
-    self.detections_list.append(detection_record)
+        detection_record = {
+            "image_name": self.image_name,
+            "class_name": self.names.get(class_id, f"class_{class_id}"),
+            "class_id": int(class_id),
+            "confidence": float(conf),
+            "detection_type": detection_type,
+            "bbox": bbox.tolist(),
+            "bbox_format": "xywhr" if len(bbox) == 5 else "xyxy"
+        }
+        self.detections_list.append(detection_record)
 
 
     def save_detections_to_json(self, filename: str = "detections.json") -> None:
