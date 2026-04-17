@@ -494,7 +494,8 @@ class ConfusionMatrix(DataExportMixin):
             "confidence": float(conf),
             "detection_type": detection_type,
             "bbox": bbox.tolist(),
-            "bbox_format": "xywhr" if len(bbox) == 5 else "xyxy"
+            "bbox_format": "xywhr" if len(bbox) == 5 else "xyxy",
+            "detection_type":detection_type
         }
         self.detections_list.append(detection_record)
 
