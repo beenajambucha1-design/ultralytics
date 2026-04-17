@@ -475,16 +475,16 @@ class ConfusionMatrix(DataExportMixin):
                 # Save FP detection
                 self._save_detection_detail(bboxes[i].cpu().numpy(), dc,detections["conf"][i].item(),"FP" )
     def _save_detection_detail(self, bbox: np.ndarray, class_id: int, conf: float, detection_type: str) -> None:
-    """Save detection details to list for later JSON export.
+        """Save detection details to list for later JSON export.
     
-    Args:
-        bbox (np.ndarray): Bounding box coordinates [x1, y1, x2, y2] or [x, y, w, h, angle].
-        class_id (int): Class ID of the detection.
-        conf (float): Confidence score.
-        detection_type (str): Type of detection ('TP', 'FP', 'FN').
-    """
-    if self.save_dir is None:
-        return
+        Args:
+            bbox (np.ndarray): Bounding box coordinates [x1, y1, x2, y2] or [x, y, w, h, angle].
+            class_id (int): Class ID of the detection.
+            conf (float): Confidence score.
+            detection_type (str): Type of detection ('TP', 'FP', 'FN').
+        """
+        if self.save_dir is None:
+            return
     
     detection_record = {
         "image_name": self.image_name,
