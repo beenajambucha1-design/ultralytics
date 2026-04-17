@@ -209,6 +209,31 @@ class DetectionValidator(BaseValidator):
                     pbatch["ori_shape"],
                     self.save_dir / "labels" / f"{Path(pbatch['im_file']).stem}.txt",
                 )
+    def _get_detection_type(self, pred_idx: int, pbatch: dict[str, Any], predn: dict[str, torch.Tensor]) -> str:
+        """Determine if a prediction is TP, FP, FN or GT based on confusion matrix matches.
+    
+        Args:
+            pred_idx: Index of the prediction in the batch
+            pbatch: Prepared batch with ground truth
+            predn: Prepared predictions
+        
+        Returns:
+            Detection type: 'TP', 'FP', 'FN', or 'GT'
+        """
+        if not self.confusion_matrix.matches:
+            return "UNKNOWN"
+    
+        # Check if prediction is in TP list
+        for tp_bbox in self.confusion_matrix.matches.get("TP", {}).get("bboxes", []):
+            if torch.allclose(predn["bboxes"][pred_idx], tp_bbox, atol=1e-3):
+                return "TP"
+    
+        # Check if prediction is in FP list
+        for fp_bbox in self.confusion_matrix.matches.get("FP", {}).get("bboxes", []):
+            if torch.allclose(predn["bboxes"][pred_idx], fp_bbox, atol=1e-3):
+                return "FP"
+    
+        return "FP"  # Default to FP if not matched
 
     def finalize_metrics(self) -> None:
         """Set final values for metrics speed and confusion matrix."""
@@ -382,7 +407,7 @@ class DetectionValidator(BaseValidator):
             boxes=torch.cat([predn["bboxes"], predn["conf"].unsqueeze(-1), predn["cls"].unsqueeze(-1)], dim=1),
         ).save_txt(file, save_conf=save_conf)
 
-    def pred_to_json(self, predn: dict[str, torch.Tensor], pbatch: dict[str, Any]) -> None:
+    def pred_to_json(self, predn: dict[str, torch.Tensor], pbatch: dict[str, Any], predn_orig=None, pbatch_orig=None) -> None:
         """Serialize YOLO predictions to COCO json format.
 
         Args:
@@ -404,21 +429,35 @@ class DetectionValidator(BaseValidator):
         image_id = int(stem) if stem.isnumeric() else stem
         box = ops.xyxy2xywh(predn["bboxes"])  # xywh
         box[:, :2] -= box[:, 2:] / 2  # xy center to top-left corner
-        for b, s, c in zip(box.tolist(), predn["conf"].tolist(), predn["cls"].tolist()):
+        for idx, (b, s, c) in enumerate(zip(box.tolist(), predn["conf"].tolist(), predn["cls"].tolist()):
             detection_item={"image_id": image_id,
                 "file_name": path.name,
                 "category_id": self.class_map[int(c)],
                 "bbox": [round(x, 3) for x in b],
                 "score": round(s, 5),
             }
-             # Add detection_list data from confusion matrix if available
+             # Add detection type (TP, FP, FN, GT) from confusion matrix # Add detection_list data from confusion matrix if available
             if self.confusion_matrix.matches is not None:
-                detection_item["detection_info"] = {
-                    "true_positives": len(self.confusion_matrix.matches.get("TP", {}).get("bboxes", [])),
-                    "false_positives": len(self.confusion_matrix.matches.get("FP", {}).get("bboxes", [])),
-                    "false_negatives": len(self.confusion_matrix.matches.get("FN", {}).get("bboxes", [])),
-                    "ground_truths": len(self.confusion_matrix.matches.get("GT", {}).get("bboxes", [])),
+                detection_type = "FP"  # default
+            
+            # Check TP matches
+            tp_bboxes = self.confusion_matrix.matches.get("TP", {}).get("bboxes", [])
+            if len(tp_bboxes) > idx and idx < len(tp_bboxes):
+                detection_type = "TP"
+            # Check FP matches  
+            elif idx < len(self.confusion_matrix.matches.get("FP", {}).get("bboxes", [])):
+                detection_type = "FP"
+            
+            detection_item["detection_type"] = detection_type
+            
+            # Add confusion matrix summary for this image
+            detection_item["detection_summary"] = {
+                "total_TP": len(self.confusion_matrix.matches.get("TP", {}).get("bboxes", [])),
+                "total_FP": len(self.confusion_matrix.matches.get("FP", {}).get("bboxes", [])),
+                "total_FN": len(self.confusion_matrix.matches.get("FN", {}).get("bboxes", [])),
+                "total_GT": len(self.confusion_matrix.matches.get("GT", {}).get("bboxes", [])),
             }
+        
             self.jdict.append(detection_item)
                
 
