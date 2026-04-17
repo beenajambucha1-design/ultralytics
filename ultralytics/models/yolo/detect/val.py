@@ -96,8 +96,7 @@ class DetectionValidator(BaseValidator):
         self.seen = 0
         self.jdict = []
         self.metrics.names = model.names
-        self.detection_list = []
-        self.confusion_matrix = ConfusionMatrix(names=model.names, save_matches=self.args.plots and self.args.visualize, detection_list=model.detection_list )
+        self.confusion_matrix = ConfusionMatrix(names=model.names, save_matches=self.args.plots and self.args.visualize)
 
     def get_desc(self) -> str:
         """Return a formatted string summarizing class metrics of YOLO model."""
@@ -406,16 +405,22 @@ class DetectionValidator(BaseValidator):
         box = ops.xyxy2xywh(predn["bboxes"])  # xywh
         box[:, :2] -= box[:, 2:] / 2  # xy center to top-left corner
         for b, s, c in zip(box.tolist(), predn["conf"].tolist(), predn["cls"].tolist()):
-            self.jdict.append(
-                {
-                    "image_id": image_id,
-                    "file_name": path.name,
-                    "category_id": self.class_map[int(c)],
-                    "bbox": [round(x, 3) for x in b],
-                    "score": round(s, 5),
-                    "Detection_list":Detection_list
-                }
-            )
+            detection_item={"image_id": image_id,
+                "file_name": path.name,
+                "category_id": self.class_map[int(c)],
+                "bbox": [round(x, 3) for x in b],
+                "score": round(s, 5),
+            }
+             # Add detection_list data from confusion matrix if available
+            if self.confusion_matrix.matches is not None:
+                detection_item["detection_info"] = {
+                    "true_positives": len(self.confusion_matrix.matches.get("TP", {}).get("bboxes", [])),
+                    "false_positives": len(self.confusion_matrix.matches.get("FP", {}).get("bboxes", [])),
+                    "false_negatives": len(self.confusion_matrix.matches.get("FN", {}).get("bboxes", [])),
+                    "ground_truths": len(self.confusion_matrix.matches.get("GT", {}).get("bboxes", [])),
+            }
+            self.jdict.append(detection_item)
+               
 
     def scale_preds(self, predn: dict[str, torch.Tensor], pbatch: dict[str, Any]) -> dict[str, torch.Tensor]:
         """Scales predictions to the original image size."""
