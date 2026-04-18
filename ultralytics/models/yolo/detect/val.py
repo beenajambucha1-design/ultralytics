@@ -440,7 +440,7 @@ class DetectionValidator(BaseValidator):
             }
     
         # Add EACH bounding box to JSON
-         num_predictions = len(predn["bboxes"])
+        num_predictions = len(predn["bboxes"])
         for idx in range(num_predictions):
             b = box[idx].tolist()
             s = predn["conf"][idx].item() if isinstance(predn["conf"][idx], torch.Tensor) else predn["conf"][idx]
