@@ -443,10 +443,10 @@ class DetectionValidator(BaseValidator):
         image_summary = {}
         if self.confusion_matrix.matches is not None:
             image_summary = {
-                "total_TP": len(self.confusion_matrix.matches.get("TP", {}).get("bboxes", [])),
-                "total_FP": len(self.confusion_matrix.matches.get("FP", {}).get("bboxes", [])),
-                "total_FN": len(self.confusion_matrix.matches.get("FN", {}).get("bboxes", [])),
-                "total_GT": len(self.confusion_matrix.matches.get("GT", {}).get("bboxes", [])),
+                "total_TP": (self.confusion_matrix.matches.get("TP", {}).get("bboxes", [])),
+                "total_FP": (self.confusion_matrix.matches.get("FP", {}).get("bboxes", [])),
+                "total_FN": (self.confusion_matrix.matches.get("FN", {}).get("bboxes", [])),
+                "total_GT": (self.confusion_matrix.matches.get("GT", {}).get("bboxes", [])),
             }
     
         # Add EACH bounding box to JSON
