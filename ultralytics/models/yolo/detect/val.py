@@ -188,6 +188,9 @@ class DetectionValidator(BaseValidator):
                     "pred_cls": np.zeros(0) if no_pred else predn["cls"].cpu().numpy(),
                 }
             )
+            # Print TP/FP/FN boxes for this image
+            self._print_tp_fp_fn(predn, pbatch)
+
             # Evaluate
             if self.args.plots:
                 self.confusion_matrix.process_batch(predn, pbatch, conf=self.args.conf)
@@ -209,6 +212,85 @@ class DetectionValidator(BaseValidator):
                     pbatch["ori_shape"],
                     self.save_dir / "labels" / f"{Path(pbatch['im_file']).stem}.txt",
                 )
+
+    def _print_tp_fp_fn(self, predn: dict[str, torch.Tensor], pbatch: dict[str, Any]) -> None:
+        """Print TP, FP, and FN bounding boxes for a single image during validation.
+
+        Matches predictions to ground-truth boxes at IoU=0.5 and logs each TP/FP prediction
+        (with class name and confidence) plus each unmatched GT box as an FN.  Coordinates
+        are scaled back to the original image resolution for readability.
+
+        Args:
+            predn (dict[str, torch.Tensor]): Prepared predictions with keys 'bboxes' (N,4 xyxy),
+                'cls' (N,), and 'conf' (N,) in image space.
+            pbatch (dict[str, Any]): Prepared ground-truth batch with keys 'bboxes' (M,4 xyxy),
+                'cls' (M,), 'im_file', 'imgsz', 'ori_shape', and 'ratio_pad'.
+        """
+        im_file = Path(pbatch["im_file"]).name
+        pred_bboxes = predn["bboxes"]   # (N, 4) xyxy, image space
+        pred_cls = predn["cls"]         # (N,)
+        pred_conf = predn["conf"]       # (N,)
+        gt_bboxes = pbatch["bboxes"]    # (M, 4) xyxy, image space
+        gt_cls = pbatch["cls"]          # (M,)
+
+        n_pred = pred_cls.shape[0]
+        n_gt = gt_cls.shape[0]
+
+        # Determine which predictions are TP (matched to a GT at IoU >= 0.5 with correct class)
+        tp_mask = np.zeros(n_pred, dtype=bool)
+        matched_gt: set[int] = set()
+
+        if n_pred > 0 and n_gt > 0:
+            iou = box_iou(gt_bboxes, pred_bboxes)  # (n_gt, n_pred)
+            correct_class = (gt_cls[:, None] == pred_cls).cpu().numpy()
+            iou_np = iou.cpu().numpy() * correct_class
+            threshold = self.iouv[0].item()  # 0.5
+
+            matches = np.array(np.nonzero(iou_np >= threshold)).T  # (K, 2): (gt_idx, pred_idx)
+            if matches.shape[0]:
+                if matches.shape[0] > 1:
+                    matches = matches[iou_np[matches[:, 0], matches[:, 1]].argsort()[::-1]]
+                    matches = matches[np.unique(matches[:, 1], return_index=True)[1]]
+                    matches = matches[np.unique(matches[:, 0], return_index=True)[1]]
+                tp_mask[matches[:, 1].astype(int)] = True
+                matched_gt = set(matches[:, 0].astype(int))
+
+        # Scale boxes to original image space
+        s_pred = (
+            ops.scale_boxes(pbatch["imgsz"], pred_bboxes.clone(), pbatch["ori_shape"], ratio_pad=pbatch["ratio_pad"])
+            if n_pred > 0
+            else pred_bboxes
+        )
+        s_gt = (
+            ops.scale_boxes(pbatch["imgsz"], gt_bboxes.clone(), pbatch["ori_shape"], ratio_pad=pbatch["ratio_pad"])
+            if n_gt > 0
+            else gt_bboxes
+        )
+
+        tp_idx = torch.tensor(tp_mask)
+        fp_idx = torch.tensor(~tp_mask)
+        tp_bboxes, tp_cls_v, tp_conf_v = s_pred[tp_idx], pred_cls[tp_idx], pred_conf[tp_idx]
+        fp_bboxes, fp_cls_v, fp_conf_v = s_pred[fp_idx], pred_cls[fp_idx], pred_conf[fp_idx]
+
+        fn_indices = [i for i in range(n_gt) if i not in matched_gt]
+        if fn_indices:
+            fn_bboxes, fn_cls_v = s_gt[fn_indices], gt_cls[fn_indices]
+        else:
+            fn_bboxes, fn_cls_v = s_gt[:0], gt_cls[:0]
+
+        LOGGER.info(
+            f"\nImage: {im_file}  TP: {len(tp_bboxes)}  FP: {len(fp_bboxes)}  FN: {len(fn_bboxes)}"
+        )
+        for i in range(len(tp_bboxes)):
+            b = [round(x, 1) for x in tp_bboxes[i].tolist()]
+            LOGGER.info(f"  TP[{i}] class={self.names[int(tp_cls_v[i])]} conf={float(tp_conf_v[i]):.3f} bbox={b}")
+        for i in range(len(fp_bboxes)):
+            b = [round(x, 1) for x in fp_bboxes[i].tolist()]
+            LOGGER.info(f"  FP[{i}] class={self.names[int(fp_cls_v[i])]} conf={float(fp_conf_v[i]):.3f} bbox={b}")
+        for i in range(len(fn_bboxes)):
+            b = [round(x, 1) for x in fn_bboxes[i].tolist()]
+            LOGGER.info(f"  FN[{i}] class={self.names[int(fn_cls_v[i])]} gt_bbox={b}")
+
     def _get_detection_type(self, pred_idx: int, pbatch: dict[str, Any], predn: dict[str, torch.Tensor]) -> str:
         """Determine if a prediction is TP, FP, FN or GT based on confusion matrix matches.
     
