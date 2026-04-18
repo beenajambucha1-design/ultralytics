@@ -419,15 +419,25 @@ class DetectionValidator(BaseValidator):
         image_id = int(stem) if stem.isnumeric() else stem
         box = ops.xyxy2xywh(predn["bboxes"])  # xywh
         box[:, :2] -= box[:, 2:] / 2  # xy center to top-left corner
-    
+        # Get detection types for EACH predicted bbox
+        detection_types = ["FP"] * len(predn["bboxes"])  # Default all to FP
         # Get detection types for this image from confusion matrix
         detection_types = []
         if self.confusion_matrix.matches is not None and self.args.plots:
             tp_bboxes = self.confusion_matrix.matches.get("TP", {}).get("bboxes", [])
             fp_bboxes = self.confusion_matrix.matches.get("FP", {}).get("bboxes", [])
+            # Mark TPs
+            for i, tp_bbox in enumerate(tp_bboxes):
+                if i < len(detection_types):
+                    detection_types[i] = "TP"
         
-            # Create list of all detection types
-            detection_types = ["TP"] * len(tp_bboxes) + ["FP"] * len(fp_bboxes)
+                # Mark FPs (starting after TPs)
+            for i, fp_bbox in enumerate(fp_bboxes):
+                fp_idx = len(tp_bboxes) + i
+                if fp_idx < len(detection_types):
+                    detection_types[fp_idx] = "FP"
+            
+            
     
         # Get image-level summary (same for all bboxes of this image)
         image_summary = {}
@@ -453,21 +463,13 @@ class DetectionValidator(BaseValidator):
                 "bbox": [round(x, 3) for x in b],
                 "score": round(float(s), 5),
                 "class_name": self.names[int(c)],  # Add class name for clarity
+                "detection_type": detection_types[idx],  # Use detection type for this specific bbox
+                "image_detection_summary": image_summary,
+                
             }
-        
-            # Add detection type for each bbox
-            if idx < len(detection_types):
-                detection_item["detection_type"] = detection_types[idx]
-            else:
-                detection_item["detection_type"] = "FP"  # Default to FP if beyond tracked matches
-        
-            # Add image-level summary
-            if image_summary:
-                detection_item["image_detection_summary"] = image_summary
-        
             self.jdict.append(detection_item)
-               
-
+                
+                        
     def scale_preds(self, predn: dict[str, torch.Tensor], pbatch: dict[str, Any]) -> dict[str, torch.Tensor]:
         """Scales predictions to the original image size."""
         return {
