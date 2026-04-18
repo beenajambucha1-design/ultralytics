@@ -407,56 +407,63 @@ class DetectionValidator(BaseValidator):
             boxes=torch.cat([predn["bboxes"], predn["conf"].unsqueeze(-1), predn["cls"].unsqueeze(-1)], dim=1),
         ).save_txt(file, save_conf=save_conf)
 
-    def pred_to_json(self, predn: dict[str, torch.Tensor], pbatch: dict[str, Any], predn_orig=None, pbatch_orig=None) -> None:
-        """Serialize YOLO predictions to COCO json format.
+    def pred_to_json(self, predn: dict[str, torch.Tensor], pbatch: dict[str, Any]) -> None:
+        """Serialize YOLO predictions to COCO json format with per-bbox detection type.
 
         Args:
-            predn (dict[str, torch.Tensor]): Predictions dictionary containing 'bboxes', 'conf', and 'cls' keys with
-                bounding box coordinates, confidence scores, and class predictions.
+            predn (dict[str, torch.Tensor]): Predictions dictionary containing 'bboxes', 'conf', and 'cls' keys.
             pbatch (dict[str, Any]): Batch dictionary containing 'imgsz', 'ori_shape', 'ratio_pad', and 'im_file'.
-
-        Examples:
-             >>> result = {
-             ...     "image_id": 42,
-             ...     "file_name": "42.jpg",
-             ...     "category_id": 18,
-             ...     "bbox": [258.15, 41.29, 348.26, 243.78],
-             ...     "score": 0.236,
-             ... }
         """
         path = Path(pbatch["im_file"])
         stem = path.stem
         image_id = int(stem) if stem.isnumeric() else stem
         box = ops.xyxy2xywh(predn["bboxes"])  # xywh
         box[:, :2] -= box[:, 2:] / 2  # xy center to top-left corner
-        for idx, (b, s, c) in enumerate(zip(box.tolist(), predn["conf"].tolist(), predn["cls"].tolist())):
-            detection_item={"image_id": image_id,
-                "file_name": path.name,
-                "category_id": self.class_map[int(c)],
-                "bbox": [round(x, 3) for x in b],
-                "score": round(s, 5),
-            }
-             # Add detection type (TP, FP, FN, GT) from confusion matrix # Add detection_list data from confusion matrix if available
-            if self.confusion_matrix.matches is not None:
-                detection_type = "FP"  # default
-            
-            # Check TP matches
+    
+        # Get detection types for this image from confusion matrix
+        detection_types = []
+        if self.confusion_matrix.matches is not None and self.args.plots:
             tp_bboxes = self.confusion_matrix.matches.get("TP", {}).get("bboxes", [])
-            if len(tp_bboxes) > idx and idx < len(tp_bboxes):
-                detection_type = "TP"
-            # Check FP matches  
-            elif idx < len(self.confusion_matrix.matches.get("FP", {}).get("bboxes", [])):
-                detection_type = "FP"
-            
-            detection_item["detection_type"] = detection_type
-            
-            # Add confusion matrix summary for this image
-            detection_item["detection_summary"] = {
+            fp_bboxes = self.confusion_matrix.matches.get("FP", {}).get("bboxes", [])
+        
+            # Create list of all detection types
+            detection_types = ["TP"] * len(tp_bboxes) + ["FP"] * len(fp_bboxes)
+    
+        # Get image-level summary (same for all bboxes of this image)
+        image_summary = {}
+        if self.confusion_matrix.matches is not None:
+            image_summary = {
                 "total_TP": len(self.confusion_matrix.matches.get("TP", {}).get("bboxes", [])),
                 "total_FP": len(self.confusion_matrix.matches.get("FP", {}).get("bboxes", [])),
                 "total_FN": len(self.confusion_matrix.matches.get("FN", {}).get("bboxes", [])),
                 "total_GT": len(self.confusion_matrix.matches.get("GT", {}).get("bboxes", [])),
             }
+    
+        # Add EACH bounding box to JSON
+         num_predictions = len(predn["bboxes"])
+        for idx in range(num_predictions):
+            b = box[idx].tolist()
+            s = predn["conf"][idx].item() if isinstance(predn["conf"][idx], torch.Tensor) else predn["conf"][idx]
+            c = predn["cls"][idx].item() if isinstance(predn["cls"][idx], torch.Tensor) else predn["cls"][idx]
+        
+            detection_item = {
+                "image_id": image_id,
+                "file_name": path.name,
+                "category_id": self.class_map[int(c)],
+                "bbox": [round(x, 3) for x in b],
+                "score": round(float(s), 5),
+                "class_name": self.names[int(c)],  # Add class name for clarity
+            }
+        
+            # Add detection type for each bbox
+            if idx < len(detection_types):
+                detection_item["detection_type"] = detection_types[idx]
+            else:
+                detection_item["detection_type"] = "FP"  # Default to FP if beyond tracked matches
+        
+            # Add image-level summary
+            if image_summary:
+                detection_item["image_detection_summary"] = image_summary
         
             self.jdict.append(detection_item)
                
