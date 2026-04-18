@@ -188,8 +188,9 @@ class DetectionValidator(BaseValidator):
                     "pred_cls": np.zeros(0) if no_pred else predn["cls"].cpu().numpy(),
                 }
             )
-            # Print TP/FP/FN boxes for this image
-            self._print_tp_fp_fn(predn, pbatch)
+            # Print TP/FP/FN boxes for this image (main process only)
+            if RANK in {-1, 0}:
+                self._print_tp_fp_fn(predn, pbatch)
 
             # Evaluate
             if self.args.plots:
