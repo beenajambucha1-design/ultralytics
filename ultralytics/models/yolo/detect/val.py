@@ -422,7 +422,7 @@ class DetectionValidator(BaseValidator):
         # Get detection types for EACH predicted bbox
         detection_types = ["FP"] * len(predn["bboxes"])  # Default all to FP
         # Get detection types for this image from confusion matrix
-        detection_types = []
+        
         if self.confusion_matrix.matches is not None and self.args.plots:
             tp_bboxes = self.confusion_matrix.matches.get("TP", {}).get("bboxes", [])
             fp_bboxes = self.confusion_matrix.matches.get("FP", {}).get("bboxes", [])
