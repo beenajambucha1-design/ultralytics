@@ -5,6 +5,7 @@ from collections import OrderedDict
 from types import SimpleNamespace
 from unittest import mock
 
+import numpy as np
 import pytest
 import torch
 
@@ -21,6 +22,76 @@ from ultralytics.utils import ASSETS, DEFAULT_CFG, IS_RASPBERRYPI, WEIGHTS_DIR
 def test_func(*args, **kwargs):
     """Test function used as a callback stub to verify callback registration."""
     print("callback test passed")
+
+
+def test_detection_pred_to_json_match_types_and_fn_entries():
+    """Test detection JSON serialization includes TP/FP/FN match_type entries."""
+    validator = detect.DetectionValidator.__new__(detect.DetectionValidator)
+    validator.jdict = []
+    validator.class_map = {0: 0, 1: 1}
+
+    predn = {
+        "bboxes": torch.tensor([[10.0, 10.0, 20.0, 20.0], [30.0, 30.0, 50.0, 50.0]]),
+        "conf": torch.tensor([0.9, 0.6]),
+        "cls": torch.tensor([0.0, 1.0]),
+    }
+    pbatch = {
+        "imgsz": (64, 64),
+        "ori_shape": (64, 64),
+        "ratio_pad": ((1.0, 1.0), (0.0, 0.0)),
+        "im_file": "42.jpg",
+        "bboxes": torch.tensor([[12.0, 12.0, 22.0, 22.0]]),
+        "cls": torch.tensor([0.0]),
+    }
+
+    validator.pred_to_json(predn, pbatch, is_tp=np.array([True, False]), fn_gt_indices=[0])
+
+    assert [x["match_type"] for x in validator.jdict] == ["TP", "FP", "FN"]
+    assert validator.jdict[-1]["score"] == 0.0
+    assert validator.jdict[-1]["category_id"] == 0
+    assert validator.jdict[-1]["bbox"] == [12.0, 12.0, 10.0, 10.0]
+
+
+def test_detection_update_metrics_writes_fn_when_no_predictions():
+    """Test update_metrics emits FN entries when an image has ground truth but no predictions."""
+    validator = detect.DetectionValidator.__new__(detect.DetectionValidator)
+    validator.seen = 0
+    validator.iouv = torch.linspace(0.5, 0.95, 10)
+    validator.args = SimpleNamespace(
+        plots=False,
+        visualize=False,
+        save_json=True,
+        save_txt=False,
+        task="detect",
+        conf=0.25,
+        show_labels=True,
+        show_conf=True,
+    )
+    validator.metrics = SimpleNamespace(update_stats=lambda *_: None)
+    validator._prepare_batch = lambda *_: {
+        "cls": torch.tensor([0.0, 1.0]),
+        "bboxes": torch.tensor([[5.0, 5.0, 10.0, 10.0], [15.0, 15.0, 20.0, 20.0]]),
+        "imgsz": (64, 64),
+        "ori_shape": (64, 64),
+        "ratio_pad": ((1.0, 1.0), (0.0, 0.0)),
+        "im_file": "1.jpg",
+    }
+    validator._prepare_pred = lambda x: x
+    validator._process_batch = lambda *_: {"tp": np.zeros((0, 10), dtype=bool)}
+
+    recorded = {}
+
+    def capture_pred_to_json(predn, pbatch, is_tp=None, fn_gt_indices=None):
+        recorded["is_tp_len"] = len(is_tp) if is_tp is not None else 0
+        recorded["fn_gt_indices"] = fn_gt_indices
+
+    validator.pred_to_json = capture_pred_to_json
+
+    preds = [{"bboxes": torch.empty((0, 4)), "conf": torch.empty(0), "cls": torch.empty(0)}]
+    validator.update_metrics(preds, batch={})
+
+    assert recorded["is_tp_len"] == 0
+    assert recorded["fn_gt_indices"] == [0, 1]
 
 
 def test_export(monkeypatch, tmp_path):

@@ -177,12 +177,19 @@ class DetectionValidator(BaseValidator):
             self.seen += 1
             pbatch = self._prepare_batch(si, batch)
             predn = self._prepare_pred(pred)
+            batch_metrics = self._process_batch(predn, pbatch)
+            # Use IoU@0.5 (first threshold) for per-prediction TP/FP labels.
+            is_tp = (
+                batch_metrics["tp"][:, 0]
+                if batch_metrics["tp"].ndim > 1 and batch_metrics["tp"].shape[1] > 0
+                else np.zeros(predn["cls"].shape[0], dtype=bool)
+            )
 
             cls = pbatch["cls"].cpu().numpy()
             no_pred = predn["cls"].shape[0] == 0
             self.metrics.update_stats(
                 {
-                    **self._process_batch(predn, pbatch),
+                    **batch_metrics,
                     "target_cls": cls,
                     "target_img": np.unique(cls),
                     "conf": np.zeros(0) if no_pred else predn["conf"].cpu().numpy(),
@@ -202,15 +209,36 @@ class DetectionValidator(BaseValidator):
                         self.args.show_conf,
                     )
 
-            if no_pred:
-                continue
-
             # Save
-            if self.args.save_json or self.args.save_txt:
+            if (self.args.save_json or self.args.save_txt) and not no_pred:
                 predn_scaled = self.scale_preds(predn, pbatch)
             if self.args.save_json:
-                self.pred_to_json(predn_scaled, pbatch)
+                if self.args.task == "detect":
+                    fn_gt_indices = []
+                    if pbatch["cls"].shape[0]:
+                        if no_pred:
+                            fn_gt_indices = list(range(pbatch["cls"].shape[0]))
+                        else:
+                            iou = box_iou(pbatch["bboxes"], predn["bboxes"])
+                            iou = (iou * (pbatch["cls"][:, None] == predn["cls"])).cpu().numpy()
+                            matches = np.array(np.nonzero(iou >= float(self.iouv[0]))).T
+                            if matches.shape[0] > 1:
+                                matches = matches[iou[matches[:, 0], matches[:, 1]].argsort()[::-1]]
+                                matches = matches[np.unique(matches[:, 1], return_index=True)[1]]
+                                matches = matches[np.unique(matches[:, 0], return_index=True)[1]]
+                            matched_gt = set(matches[:, 0].astype(int).tolist()) if matches.size else set()
+                            fn_gt_indices = [i for i in range(pbatch["cls"].shape[0]) if i not in matched_gt]
+                    self.pred_to_json(
+                        predn_scaled if not no_pred else predn,
+                        pbatch,
+                        is_tp=is_tp,
+                        fn_gt_indices=fn_gt_indices,
+                    )
+                elif not no_pred:
+                    self.pred_to_json(predn_scaled, pbatch)
             if self.args.save_txt:
+                if no_pred:
+                    continue
                 self.save_one_txt(
                     predn_scaled,
                     self.args.save_conf,
@@ -405,13 +433,21 @@ class DetectionValidator(BaseValidator):
             boxes=torch.cat([predn["bboxes"], predn["conf"].unsqueeze(-1), predn["cls"].unsqueeze(-1)], dim=1),
         ).save_txt(file, save_conf=save_conf)
 
-    def pred_to_json(self, predn: dict[str, torch.Tensor], pbatch: dict[str, Any]) -> None:
+    def pred_to_json(
+        self,
+        predn: dict[str, torch.Tensor],
+        pbatch: dict[str, Any],
+        is_tp: np.ndarray | None = None,
+        fn_gt_indices: list[int] | None = None,
+    ) -> None:
         """Serialize YOLO predictions to COCO json format.
 
         Args:
             predn (dict[str, torch.Tensor]): Predictions dictionary containing 'bboxes', 'conf', and 'cls' keys with
                 bounding box coordinates, confidence scores, and class predictions.
             pbatch (dict[str, Any]): Batch dictionary containing 'imgsz', 'ori_shape', 'ratio_pad', and 'im_file'.
+            is_tp (np.ndarray | None): Optional per-prediction TP flags at IoU 0.5, defaults to all FP if None.
+            fn_gt_indices (list[int] | None): Optional unmatched ground-truth indices to append as FN entries.
 
         Examples:
              >>> result = {
@@ -427,7 +463,12 @@ class DetectionValidator(BaseValidator):
         image_id = int(stem) if stem.isnumeric() else stem
         box = ops.xyxy2xywh(predn["bboxes"])  # xywh
         box[:, :2] -= box[:, 2:] / 2  # xy center to top-left corner
-        for b, s, c in zip(box.tolist(), predn["conf"].tolist(), predn["cls"].tolist()):
+        if is_tp is None:
+            is_tp_list = [False] * box.shape[0]
+        else:
+            is_tp_array = np.asarray(is_tp, dtype=bool).reshape(-1)
+            is_tp_list = is_tp_array.tolist() if is_tp_array.size == box.shape[0] else [False] * box.shape[0]
+        for b, s, c, tp_flag in zip(box.tolist(), predn["conf"].tolist(), predn["cls"].tolist(), is_tp_list):
             self.jdict.append(
                 {
                     "image_id": image_id,
@@ -435,8 +476,29 @@ class DetectionValidator(BaseValidator):
                     "category_id": self.class_map[int(c)],
                     "bbox": [round(x, 3) for x in b],
                     "score": round(s, 5),
+                    "match_type": "TP" if tp_flag else "FP",
                 }
             )
+        if fn_gt_indices:
+            gt_bboxes_scaled = ops.scale_boxes(
+                pbatch["imgsz"],
+                pbatch["bboxes"].clone(),
+                pbatch["ori_shape"],
+                ratio_pad=pbatch["ratio_pad"],
+            )
+            for fn_idx in fn_gt_indices:
+                gt_box = ops.xyxy2xywh(gt_bboxes_scaled[fn_idx].unsqueeze(0))[0]
+                gt_box[:2] -= gt_box[2:] / 2  # xy center to top-left corner
+                self.jdict.append(
+                    {
+                        "image_id": image_id,
+                        "file_name": path.name,
+                        "category_id": self.class_map[int(pbatch["cls"][fn_idx].item())],
+                        "bbox": [round(x, 3) for x in gt_box.tolist()],
+                        "score": 0.0,
+                        "match_type": "FN",
+                    }
+                )
 
     def scale_preds(self, predn: dict[str, torch.Tensor], pbatch: dict[str, Any]) -> dict[str, torch.Tensor]:
         """Scales predictions to the original image size."""
