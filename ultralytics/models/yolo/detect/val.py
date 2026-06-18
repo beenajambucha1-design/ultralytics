@@ -178,7 +178,12 @@ class DetectionValidator(BaseValidator):
             pbatch = self._prepare_batch(si, batch)
             predn = self._prepare_pred(pred)
             batch_metrics = self._process_batch(predn, pbatch)
-            is_tp = batch_metrics["tp"][:, 0] if batch_metrics["tp"].shape[1] else np.zeros(predn["cls"].shape[0], dtype=bool)
+            # Use IoU@0.5 (first threshold) for per-prediction TP/FP labels.
+            is_tp = (
+                batch_metrics["tp"][:, 0]
+                if batch_metrics["tp"].ndim > 1 and batch_metrics["tp"].shape[1] > 0
+                else np.zeros(predn["cls"].shape[0], dtype=bool)
+            )
 
             cls = pbatch["cls"].cpu().numpy()
             no_pred = predn["cls"].shape[0] == 0
@@ -214,14 +219,14 @@ class DetectionValidator(BaseValidator):
                         if no_pred:
                             fn_gt_indices = list(range(pbatch["cls"].shape[0]))
                         else:
-                            iou = box_iou(pbatch["bboxes"], predn["bboxes"]).cpu()
-                            correct_class = (pbatch["cls"][:, None] == predn["cls"]).cpu()
-                            valid_iou = iou * correct_class
-                            matched_gt = set()
-                            for pred_idx in np.nonzero(is_tp)[0]:
-                                gt_idx = int(valid_iou[:, pred_idx].argmax())
-                                if valid_iou[gt_idx, pred_idx] >= self.iouv[0]:
-                                    matched_gt.add(gt_idx)
+                            iou = box_iou(pbatch["bboxes"], predn["bboxes"])
+                            iou = (iou * (pbatch["cls"][:, None] == predn["cls"])).cpu().numpy()
+                            matches = np.array(np.nonzero(iou >= float(self.iouv[0]))).T
+                            if matches.shape[0] > 1:
+                                matches = matches[iou[matches[:, 0], matches[:, 1]].argsort()[::-1]]
+                                matches = matches[np.unique(matches[:, 1], return_index=True)[1]]
+                                matches = matches[np.unique(matches[:, 0], return_index=True)[1]]
+                            matched_gt = set(matches[:, 0].astype(int).tolist()) if matches.size else set()
                             fn_gt_indices = [i for i in range(pbatch["cls"].shape[0]) if i not in matched_gt]
                     self.pred_to_json(
                         predn_scaled if not no_pred else predn,

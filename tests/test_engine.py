@@ -48,6 +48,8 @@ def test_detection_pred_to_json_match_types_and_fn_entries():
 
     assert [x["match_type"] for x in validator.jdict] == ["TP", "FP", "FN"]
     assert validator.jdict[-1]["score"] == 0.0
+    assert validator.jdict[-1]["category_id"] == 0
+    assert validator.jdict[-1]["bbox"] == [12.0, 12.0, 10.0, 10.0]
 
 
 def test_detection_update_metrics_writes_fn_when_no_predictions():
@@ -80,7 +82,7 @@ def test_detection_update_metrics_writes_fn_when_no_predictions():
     recorded = {}
 
     def capture_pred_to_json(predn, pbatch, is_tp=None, fn_gt_indices=None):
-        recorded["is_tp_len"] = len(is_tp)
+        recorded["is_tp_len"] = len(is_tp) if is_tp is not None else 0
         recorded["fn_gt_indices"] = fn_gt_indices
 
     validator.pred_to_json = capture_pred_to_json
